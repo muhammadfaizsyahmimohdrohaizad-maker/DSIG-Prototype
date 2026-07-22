@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # Database Layer
+  db:
+    image: postgres:15-alpine
+    container_name: havlook_db
+    environment:
+      POSTGRES_USER: havlook_user
+      POSTGRES_PASSWORD: havlook_password
+      POSTGRES_DB: havlook_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Caching & Rate Limiting Layer
+  redis:
+    image: redis:7-alpine
+    container_name: havlook_redis
+    ports:
+      - "6379:6379"
+
+  # Backend Microservice
+  backend:
+    build: ./backend
+    container_name: havlook_backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://havlook_user:havlook_password@db:5432/havlook_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+  # Celery Asynchronous Job Worker
+  celery_worker:
+    build: ./backend
+    container_name: havlook_celery
+    command: celery -A celery_worker.celery_app worker --loglevel=info
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://havlook_user:havlook_password@db:5432/havlook_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+volumes:
+  postgres_data:
