@@ -1,7 +1,6 @@
 <?php
 // api/index.php - Self-Healing Bulletproof Aiven MySQL Backend for Vercel
 header("Access-Control-Allow-Origin: *");
-header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 
@@ -10,6 +9,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
 }
+
+// Check if this is an API request (POST, PUT, DELETE, AJAX fetch, or ?api=1 query parameter)
+$isApiCall = ($_SERVER['REQUEST_METHOD'] !== 'GET') || 
+             isset($_GET['action']) || 
+             isset($_GET['api']) || 
+             (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false) ||
+             (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['HTTP_X_REQUESTED_WITH'] === 'XMLHttpRequest');
+
+// -------------------------------------------------------------
+// SERVE HTML IF VISITED DIRECTLY IN BROWSER
+// -------------------------------------------------------------
+if (!$isApiCall) {
+    header("Content-Type: text/html; charset=UTF-8");
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>HavLook - Churn Risk Radar</title>
+        <!-- Tabler Icons CSS -->
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+    </head>
+    <body>
+        <div id="root"></div>
+    </body>
+    </html>
+    <?php
+    exit();
+}
+
+// Set JSON Header for API requests
+header("Content-Type: application/json; charset=UTF-8");
 
 // Aiven Cloud MySQL Credentials
 $host = "mysql-241871b6-student-92dd.k.aivencloud.com";

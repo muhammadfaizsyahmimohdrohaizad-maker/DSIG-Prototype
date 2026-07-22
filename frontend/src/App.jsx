@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { supabase } from './supabaseClient';
 import './index.css';
 
 // SVG 30-Day Health Score Trend Line Chart Component
@@ -108,7 +109,7 @@ export default function App() {
   // Modal States
   const [modalConfig, setModalConfig] = useState({ isOpen: false, title: '', message: '' });
 
-  // Edit Account State (includes Email)
+  // Edit Account State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editAccount, setEditAccount] = useState({ id: null, name: '', initials: '', desc: '', email: '' });
 
@@ -120,58 +121,49 @@ export default function App() {
 
   const navTabs = ['Dashboard', 'At-risk radar', 'Accounts', 'Settings'];
 
-  // Fetch Accounts from PHP API
-  const fetchAccounts = () => {
-    fetch("/api")
-      .then(res => res.json())
-      .then(data => {
-        setDashboardData(data);
-        if (data.length > 0) {
+  // Fetch Accounts directly from Supabase
+  const fetchAccounts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('accounts')
+        .select('*')
+        .order('id', { ascending: true });
+
+      if (error) throw error;
+
+      if (Array.isArray(data)) {
+        const cleanedData = data.map(account => ({
+          ...account,
+          desc: account.desc || account.desc_text || '',
+          history: account.history || [],
+          factors: account.factors || [],
+          email: account.email || ''
+        }));
+        
+        setDashboardData(cleanedData);
+        
+        if (cleanedData.length > 0) {
           setActiveAccount(prev => {
-            const exists = data.find(item => item.id === prev?.id);
-            return exists ? data.find(item => item.id === prev.id) : data[0];
+            const exists = cleanedData.find(item => item.id === prev?.id);
+            return exists || cleanedData[0];
           });
         } else {
           setActiveAccount(null);
         }
-        setIsLoading(false);
-      })
-      .catch(err => {
-        console.error('Error fetching data:', err);
-        setIsLoading(false);
-      });
+      } else {
+        setDashboardData([]);
+      }
+    } catch (err) {
+      console.error('Error fetching data from Supabase:', err);
+      setDashboardData([]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
-    setIsLoading(true); 
-
-    fetch("/api")
-      .then((res) => {
-        if (!res.ok) throw new Error('Network response was not ok');
-        return res.json();
-      })
-      .then((data) => {
-        if (Array.isArray(data)) {
-          const cleanedData = data.map(account => ({
-            ...account,
-            desc: account.desc || account.desc_text || '',
-            history: account.history || [],
-            factors: account.factors || [],
-            email: account.email || ''
-          }));
-          setDashboardData(cleanedData);
-          if (cleanedData.length > 0) setActiveAccount(cleanedData[0]);
-        } else {
-          setDashboardData([]);
-        }
-      })
-      .catch((err) => {
-        console.error('Fetch error:', err);
-        setDashboardData([]); 
-      })
-      .finally(() => {
-        setIsLoading(false); 
-      });
+    setIsLoading(true);
+    fetchAccounts();
   }, []);
 
   // Compute Accounts with What-If Simulation applied
@@ -196,7 +188,7 @@ export default function App() {
     return matchesSearch && matchesRisk;
   });
 
-  // 1-Click CSV Export Function (Updated with Email)
+  // 1-Click CSV Export Function
   const handleExportCSV = () => {
     if (!dashboardData.length) return;
 
@@ -233,35 +225,32 @@ export default function App() {
     setIsEditModalOpen(true);
   };
 
-  // Handle Submitting Edit
- // Handle Submitting Edit
-  const handleUpdateAccount = (e) => {
+  // Handle Submitting Edit using Supabase
+  const handleUpdateAccount = async (e) => {
     e.preventDefault();
     if (!editAccount.name || !editAccount.initials) return;
 
-    fetch('/api', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editAccount)
-    })
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP error! Status: ${res.status}`);
-        return res.json();
-      })
-      .then(res => {
-        if (res.status === 'success') {
-          setIsEditModalOpen(false);
-          fetchAccounts();
-        } else {
-          // If the backend returns an error message, throw it
-          throw new Error(res.message || 'Unknown error occurred on the server.');
-        }
-      })
-      .catch(err => {
-        console.error('Error updating account:', err);
-        openModal('Update Failed', `Could not update the account. Details: ${err.message}`);
-      });
+    try {
+      const { error } = await supabase
+        .from('accounts')
+        .update({
+          name: editAccount.name,
+          email: editAccount.email,
+          initials: editAccount.initials,
+          desc: editAccount.desc
+        })
+        .eq('id', editAccount.id);
+
+      if (error) throw error;
+
+      setIsEditModalOpen(false);
+      fetchAccounts();
+    } catch (err) {
+      console.error('Error updating account:', err);
+      openModal('Update Failed', `Could not update the account. Details: ${err.message}`);
+    }
   };
+
   // REAL GEMINI API CALL FUNCTION
   const handleDraftOutreach = async (account) => {
     setIsAiModalOpen(true);
@@ -329,36 +318,26 @@ Guidelines:
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Handle Deleting Account
-  // Handle Deleting Account
-  const handleDeleteAccount = (id, name) => {
+  // Handle Deleting Account using Supabase
+  const handleDeleteAccount = async (id, name) => {
     if (!window.confirm(`Are you sure you want to delete ${name}?`)) return;
 
-    // Note: Added the ID to the body so your PHP backend knows which account to delete!
-    fetch(`/api`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: id })
-    })
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP error! Status: ${res.status}`);
-        return res.json();
-      })
-      .then(res => {
-        if (res.status === 'success') {
-          // If the active account was the one deleted, clear it to prevent UI bugs
-          if (activeAccount && activeAccount.id === id) {
-            setActiveAccount(null);
-          }
-          fetchAccounts();
-        } else {
-          throw new Error(res.message || 'Unknown error occurred on the server.');
-        }
-      })
-      .catch(err => {
-        console.error('Error deleting account:', err);
-        openModal('Delete Failed', `Could not delete the account. Details: ${err.message}`);
-      });
+    try {
+      const { error } = await supabase
+        .from('accounts')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      if (activeAccount && activeAccount.id === id) {
+        setActiveAccount(null);
+      }
+      fetchAccounts();
+    } catch (err) {
+      console.error('Error deleting account:', err);
+      openModal('Delete Failed', `Could not delete the account. Details: ${err.message}`);
+    }
   };
 
   const openModal = (title, message) => {
