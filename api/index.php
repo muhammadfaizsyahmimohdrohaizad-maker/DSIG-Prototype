@@ -1,5 +1,5 @@
 <?php
-// api/index.php - Bulletproof Aiven MySQL Backend for Vercel
+// api/index.php - Self-Healing Bulletproof Aiven MySQL Backend for Vercel
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
@@ -32,6 +32,33 @@ try {
         PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false
     ]);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+    // -------------------------------------------------------------
+    // AUTO-SETUP: CREATE TABLE & SEED DUMMY DATA IF EMPTY
+    // -------------------------------------------------------------
+    $pdo->exec("CREATE TABLE IF NOT EXISTS accounts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255),
+        initials VARCHAR(10),
+        `desc` TEXT,
+        score INT DEFAULT 100,
+        history JSON,
+        factors JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    $checkCount = (int)$pdo->query("SELECT COUNT(*) FROM accounts")->fetchColumn();
+    if ($checkCount === 0) {
+        $pdo->exec("INSERT INTO accounts (`name`, `email`, `initials`, `desc`, `score`, `history`, `factors`) VALUES 
+        ('Echo Analytics', 'devs@echoanalytics.io', 'EA', 'New integration activated; seat count doubled', 96, '[78, 80, 81, 82, 85, 96]', '[{\"name\":\"Seat Expansion\",\"val\":\"+100%\",\"percent\":100,\"isPositive\":true}]'),
+        ('Solaris Energy', 'billing@solaris.com', 'SE', 'Contract renewal coming up in 14 days; no response', 38, '[60, 55, 50, 45, 40, 38]', '[{\"name\":\"Radio Silence\",\"val\":\"14 days\",\"percent\":80,\"isPositive\":false}]'),
+        ('Zenith FinTech', 'support@zenith.com', 'ZF', 'Unresolved critical bug ticket open for 14 days', 29, '[70, 60, 50, 40, 35, 29]', '[{\"name\":\"Open Bug Tickets\",\"val\":\"Critical\",\"percent\":90,\"isPositive\":false}]'),
+        ('Quantum Logistics', 'tech@quantum.com', 'QL', 'Account healthy with high daily active user count', 92, '[85, 86, 88, 90, 91, 92]', '[{\"name\":\"High DAU\",\"val\":\"+25%\",\"percent\":95,\"isPositive\":true}]'),
+        ('Aether Dynamics', 'admin@aether.com', 'AD', 'Feature utilization under 15% of plan capacity', 31, '[55, 50, 45, 40, 35, 31]', '[{\"name\":\"Low Utilization\",\"val\":\"<15%\",\"percent\":85,\"isPositive\":false}]'),
+        ('Starlight Global', 'ops@starlight.com', 'SG', 'Primary champion left company; new admin onboarded', 48, '[80, 75, 60, 55, 50, 48]', '[{\"name\":\"Champion Left\",\"val\":\"High Risk\",\"percent\":70,\"isPositive\":false}]')");
+    }
+
 } catch(PDOException $e) {
     http_response_code(500);
     echo json_encode(["status" => "error", "message" => "Database Connection Failed: " . $e->getMessage()]);
