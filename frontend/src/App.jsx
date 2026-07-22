@@ -145,7 +145,7 @@ export default function App() {
   useEffect(() => {
     setIsLoading(true); 
 
-    fetch('http://localhost/DSIG%20Prototype/api.php')
+    fetch("/api")
       .then((res) => {
         if (!res.ok) throw new Error('Network response was not ok');
         return res.json();
@@ -234,24 +234,34 @@ export default function App() {
   };
 
   // Handle Submitting Edit
+ // Handle Submitting Edit
   const handleUpdateAccount = (e) => {
     e.preventDefault();
     if (!editAccount.name || !editAccount.initials) return;
 
-    fetch('http://localhost/DSIG%20Prototype/api.php', {
+    fetch('/api', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(editAccount)
     })
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP error! Status: ${res.status}`);
+        return res.json();
+      })
       .then(res => {
         if (res.status === 'success') {
           setIsEditModalOpen(false);
           fetchAccounts();
+        } else {
+          // If the backend returns an error message, throw it
+          throw new Error(res.message || 'Unknown error occurred on the server.');
         }
+      })
+      .catch(err => {
+        console.error('Error updating account:', err);
+        openModal('Update Failed', `Could not update the account. Details: ${err.message}`);
       });
   };
-
   // REAL GEMINI API CALL FUNCTION
   const handleDraftOutreach = async (account) => {
     setIsAiModalOpen(true);
@@ -320,17 +330,34 @@ Guidelines:
   };
 
   // Handle Deleting Account
+  // Handle Deleting Account
   const handleDeleteAccount = (id, name) => {
     if (!window.confirm(`Are you sure you want to delete ${name}?`)) return;
 
-    fetch(`http://localhost/DSIG%20Prototype/api.php?id=${id}`, {
-      method: 'DELETE'
+    // Note: Added the ID to the body so your PHP backend knows which account to delete!
+    fetch(`/api`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id })
     })
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP error! Status: ${res.status}`);
+        return res.json();
+      })
       .then(res => {
         if (res.status === 'success') {
+          // If the active account was the one deleted, clear it to prevent UI bugs
+          if (activeAccount && activeAccount.id === id) {
+            setActiveAccount(null);
+          }
           fetchAccounts();
+        } else {
+          throw new Error(res.message || 'Unknown error occurred on the server.');
         }
+      })
+      .catch(err => {
+        console.error('Error deleting account:', err);
+        openModal('Delete Failed', `Could not delete the account. Details: ${err.message}`);
       });
   };
 

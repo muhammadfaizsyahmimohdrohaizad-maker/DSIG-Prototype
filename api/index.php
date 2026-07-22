@@ -1,36 +1,40 @@
 <?php
-// api.php - Bulletproof MySQL Backend
+// api/index.php - Bulletproof Aiven MySQL Backend for Vercel
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 
-if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
+// Handle preflight OPTIONS request
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
 }
-$host = "mysql-241871b6-student-92dd.k.aivencloud.com;port=18197"; // ⚠️ REPLACE 12345 WITH YOUR ACTUAL AIVEN PORT
+
+// Aiven Cloud MySQL Credentials
+$host = "mysql-241871b6-student-92dd.k.aivencloud.com";
+$port = "18197";
 $db_name = "defaultdb";
 $username = "avnadmin";
-$password = getenv('AIVEN_PASSWORD');;
 
-try {
-    $pdo = new PDO("mysql:host=" . $host . ";dbname=" . $db_name . ";charset=utf8mb4", $username, $password, [PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false]);
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-} catch(PDOException $e) {
-    echo json_encode(['error' => $e->getMessage()]);
+// Read password safely across all Vercel environments
+$password = $_ENV['AIVEN_PASSWORD'] ?? getenv('AIVEN_PASSWORD') ?? $_SERVER['AIVEN_PASSWORD'] ?? '';
+
+if (empty($password)) {
+    http_response_code(500);
+    echo json_encode(["status" => "error", "message" => "Database password variable (AIVEN_PASSWORD) is not set in Vercel settings."]);
     exit();
 }
-$host = "127.0.0.1;port=3307";
-$db_name = "havlook_db";
-$username = "root";
-$password = "";
 
 try {
-    $pdo = new PDO("mysql:host=" . $host . ";dbname=" . $db_name . ";charset=utf8mb4", $username, $password);
+    $dsn = "mysql:host={$host};port={$port};dbname={$db_name};charset=utf8mb4";
+    $pdo = new PDO($dsn, $username, $password, [
+        PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false
+    ]);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch(PDOException $e) {
-    echo json_encode([]); // Return empty array so React won't crash
+    http_response_code(500);
+    echo json_encode(["status" => "error", "message" => "Database Connection Failed: " . $e->getMessage()]);
     exit();
 }
 
@@ -99,8 +103,9 @@ if ($action === 'alert' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $method = $_SERVER['REQUEST_METHOD'];
+$data = json_decode(file_get_contents("php://input"), true);
 
-// 1. GET: Fetch accounts directly from MySQL database
+// 1. GET: Fetch accounts directly from Aiven MySQL database
 if ($method === 'GET') {
     try {
         $stmt = $pdo->query("SELECT * FROM accounts ORDER BY id DESC");
@@ -114,7 +119,7 @@ if ($method === 'GET') {
             $acc['id'] = (int)$acc['id'];
             $acc['score'] = (int)$acc['score'];
 
-            // Safely parse history and factors to ensure they are NEVER null
+            // Safely parse history and factors to ensure valid arrays for React
             $decodedHistory = !empty($acc['history']) ? json_decode($acc['history'], true) : [];
             $acc['history'] = is_array($decodedHistory) ? $decodedHistory : [];
 
@@ -124,18 +129,18 @@ if ($method === 'GET') {
 
         echo json_encode($accounts);
     } catch (PDOException $e) {
-        echo json_encode([]); // Safety fallback to empty array
+        http_response_code(500);
+        echo json_encode(["status" => "error", "message" => $e->getMessage()]);
     }
     exit();
 }
 
-// 2. POST: Insert new account into MySQL (Updated with email)
+// 2. POST: Insert new account into MySQL
 if ($method === 'POST') {
-    $data = json_decode(file_get_contents("php://input"), true);
     if (!empty($data['name'])) {
         try {
             $stmt = $pdo->prepare("INSERT INTO accounts (`name`, `email`, `initials`, `desc`, `score`, `history`, `factors`) VALUES (?, ?, ?, ?, ?, ?, ?)");
-            $score = isset($data['score']) ? intval($data['score']) : 100; // Default to 100 if missing
+            $score = isset($data['score']) ? intval($data['score']) : 100;
             $email = isset($data['email']) ? $data['email'] : '';
             $history = json_encode([$score, $score, $score, $score, $score, $score]);
             $factors = json_encode([]);
@@ -143,15 +148,15 @@ if ($method === 'POST') {
             $stmt->execute([$data['name'], $email, $data['initials'], $data['desc'], $score, $history, $factors]);
             echo json_encode(['status' => 'success']);
         } catch (PDOException $e) {
+            http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
         }
         exit();
     }
 }
 
-// 3. PUT: Update existing account in MySQL (Updated with email, removed score)
+// 3. PUT: Update existing account in MySQL
 if ($method === 'PUT') {
-    $data = json_decode(file_get_contents("php://input"), true);
     if (!empty($data['id'])) {
         try {
             $stmt = $pdo->prepare("UPDATE accounts SET `name` = ?, `email` = ?, `initials` = ?, `desc` = ? WHERE `id` = ?");
@@ -159,23 +164,30 @@ if ($method === 'PUT') {
             $stmt->execute([$data['name'], $email, $data['initials'], $data['desc'], intval($data['id'])]);
             echo json_encode(['status' => 'success']);
         } catch (PDOException $e) {
+            http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
         }
         exit();
     }
 }
 
-// 4. DELETE: Remove account from MySQL
+// 4. DELETE: Remove account from MySQL (Checks URL query param AND JSON body)
 if ($method === 'DELETE') {
-    $id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+    $id = isset($_GET['id']) ? intval($_GET['id']) : (isset($data['id']) ? intval($data['id']) : 0);
+    
     if ($id > 0) {
         try {
             $stmt = $pdo->prepare("DELETE FROM accounts WHERE id = ?");
             $stmt->execute([$id]);
             echo json_encode(['status' => 'success']);
         } catch (PDOException $e) {
+            http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
         }
+        exit();
+    } else {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Missing account ID for deletion']);
         exit();
     }
 }
