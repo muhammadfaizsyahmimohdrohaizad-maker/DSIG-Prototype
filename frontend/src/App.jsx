@@ -89,6 +89,7 @@ export default function App() {
   const [activeAccount, setActiveAccount] = useState(null);
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [hoveredAccountId, setHoveredAccountId] = useState(null);
+  
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
   const [riskFilter, setRiskFilter] = useState('ALL');
@@ -106,12 +107,10 @@ export default function App() {
 
   // Modal States
   const [modalConfig, setModalConfig] = useState({ isOpen: false, title: '', message: '' });
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [newAccount, setNewAccount] = useState({ name: '', initials: '', desc: '', score: 30 });
 
-  // Edit Account State
+  // Edit Account State (includes Email)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editAccount, setEditAccount] = useState({ id: null, name: '', initials: '', desc: '', score: 30 });
+  const [editAccount, setEditAccount] = useState({ id: null, name: '', initials: '', desc: '', email: '' });
 
   // AI Email Drafter State
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
@@ -123,7 +122,7 @@ export default function App() {
 
   // Fetch Accounts from PHP API
   const fetchAccounts = () => {
-    fetch('http://localhost/DSIG%20Prototype/api.php')
+    fetch("/api")
       .then(res => res.json())
       .then(data => {
         setDashboardData(data);
@@ -135,11 +134,11 @@ export default function App() {
         } else {
           setActiveAccount(null);
         }
-        setLoading(false);
+        setIsLoading(false);
       })
       .catch(err => {
         console.error('Error fetching data:', err);
-        setLoading(false);
+        setIsLoading(false);
       });
   };
 
@@ -157,12 +156,10 @@ export default function App() {
             ...account,
             desc: account.desc || account.desc_text || '',
             history: account.history || [],
-            factors: account.factors || []
+            factors: account.factors || [],
+            email: account.email || ''
           }));
-          // FIX 1: Save to dashboardData, not accounts
           setDashboardData(cleanedData);
-          
-          // FIX 2: Set the first account as active so the radar works
           if (cleanedData.length > 0) setActiveAccount(cleanedData[0]);
         } else {
           setDashboardData([]);
@@ -173,10 +170,10 @@ export default function App() {
         setDashboardData([]); 
       })
       .finally(() => {
-        console.log("FETCH FINISHED! Turning off loading screen now.");
         setIsLoading(false); 
       });
   }, []);
+
   // Compute Accounts with What-If Simulation applied
   const simulatedAccounts = dashboardData.map(account => {
     const adjustedScore = Math.max(0, Math.round(account.score - (account.score * (simulatedDrop / 100))));
@@ -189,7 +186,8 @@ export default function App() {
   // Filtered accounts computed dynamically
   const filteredAccounts = simulatedAccounts.filter(account => {
     const matchesSearch = account.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          account.desc.toLowerCase().includes(searchQuery.toLowerCase());
+                          account.desc.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          (account.email && account.email.toLowerCase().includes(searchQuery.toLowerCase()));
     
     const matchesRisk = riskFilter === 'ALL' || 
                         (riskFilter === 'HIGH' && account.simulatedScore <= settings.highRiskCutoff) || 
@@ -198,14 +196,15 @@ export default function App() {
     return matchesSearch && matchesRisk;
   });
 
-  // 1-Click CSV Export Function
+  // 1-Click CSV Export Function (Updated with Email)
   const handleExportCSV = () => {
     if (!dashboardData.length) return;
 
-    const headers = ['Account ID', 'Company Name', 'Health Score', 'Simulated Score', 'Risk Status', 'Signals'];
+    const headers = ['Account ID', 'Company Name', 'Contact Email', 'Health Score', 'Simulated Score', 'Risk Status', 'Signals'];
     const rows = dashboardData.map(acc => [
       acc.id,
       `"${acc.name}"`,
+      `"${acc.email || ''}"`,
       acc.score,
       Math.max(0, Math.round(acc.score - (acc.score * (simulatedDrop / 100)))),
       acc.score <= settings.highRiskCutoff ? 'High Risk' : 'Medium Risk',
@@ -229,7 +228,7 @@ export default function App() {
       name: account.name,
       initials: account.initials,
       desc: account.desc,
-      score: account.score
+      email: account.email || ''
     });
     setIsEditModalOpen(true);
   };
@@ -279,6 +278,7 @@ export default function App() {
 
 Context:
 - Company: ${account.name}
+- Contact Email: ${account.email || 'N/A'}
 - Health Score: ${account.simulatedScore || account.score}/100
 - Risk Signals: ${negativeFactors}
 
@@ -288,19 +288,18 @@ Guidelines:
 3. Offer a brief 15-minute call this week.
 4. Keep it under 140 words.`;
 
-      // Updated model endpoint to gemini-2.5-flash
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-  method: 'POST', // <-- Added method: 'POST'
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    contents: [{ parts: [{ text: prompt }] }]
-  })
-});
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }]
+        })
+      });
 
       const data = await response.json();
 
       if (data.candidates && data.candidates[0]?.content?.parts[0]?.text) {
-        setAiEmailText(data.candidates[0].content.parts[0].text);
+        setAiEmailText(`To: ${account.email || 'No email on file'}\n\n${data.candidates[0].content.parts[0].text}`);
       } else if (data.error) {
         setAiEmailText(`⚠️ Gemini API Error:\n${data.error.message || 'Invalid API Key or quota limit reached.'}`);
       } else {
@@ -318,26 +317,6 @@ Guidelines:
     navigator.clipboard.writeText(aiEmailText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  // Handle Creating New Account
-  const handleCreateAccount = (e) => {
-    e.preventDefault();
-    if (!newAccount.name || !newAccount.initials) return;
-
-    fetch('http://localhost/DSIG%20Prototype/api.php', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newAccount)
-    })
-      .then(res => res.json())
-      .then(res => {
-        if (res.status === 'success') {
-          setIsAddModalOpen(false);
-          setNewAccount({ name: '', initials: '', desc: '', score: 30 });
-          fetchAccounts();
-        }
-      });
   };
 
   // Handle Deleting Account
@@ -367,7 +346,6 @@ Guidelines:
     openModal('Navigation', `Navigating to detailed breakdown for: ${label}`);
   };
 
-  // Change "loading" to "isLoading" here:
   if (isLoading) {
     return (
       <div className="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -577,27 +555,13 @@ Guidelines:
             <article className="panel">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <h2 className="panel-title" style={{ margin: 0 }}>At-risk radar</h2>
-                <button 
-                  onClick={() => setIsAddModalOpen(true)}
-                  style={{ 
-                    backgroundColor: 'var(--surface-1)', 
-                    border: '1px solid var(--border)', 
-                    color: 'var(--text-primary)',
-                    padding: '4px 10px',
-                    borderRadius: '6px',
-                    fontSize: '12px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  + Add Account
-                </button>
               </div>
 
               {/* Search and Filter Row */}
               <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
                 <input 
                   type="text" 
-                  placeholder="Search accounts..." 
+                  placeholder="Search accounts or emails..." 
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                   style={{ 
@@ -685,7 +649,12 @@ Guidelines:
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
-                      <h2 className="panel-title">Why flagged: {activeAccount.name}</h2>
+                      <h2 className="panel-title" style={{ marginBottom: '4px' }}>Why flagged: {activeAccount.name}</h2>
+                      {activeAccount.email && (
+                        <p style={{ fontSize: '13px', color: '#6366f1', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          ✉️ {activeAccount.email}
+                        </p>
+                      )}
                       <p className="panel-subtitle">SHAP contribution to churn risk & historical trends</p>
                     </div>
                     <div style={{ display: 'flex', gap: '6px' }}>
@@ -785,21 +754,6 @@ Guidelines:
                 >
                   📥 Export CSV
                 </button>
-                <button 
-                  onClick={() => setIsAddModalOpen(true)}
-                  style={{ 
-                    backgroundColor: '#6366f1', 
-                    border: 'none', 
-                    color: '#fff',
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: 'pointer'
-                  }}
-                >
-                  + Add New Account
-                </button>
               </div>
             </div>
 
@@ -807,7 +761,7 @@ Guidelines:
             <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
               <input 
                 type="text" 
-                placeholder="Search by company or signal..." 
+                placeholder="Search by company, email, or signal..." 
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 style={{ 
@@ -859,10 +813,13 @@ Guidelines:
                         <tr key={account.id} style={{ borderBottom: '1px solid var(--border)' }}>
                           <td style={{ padding: '12px 10px', fontWeight: 600 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                              <div className={`radar-icon ${isDanger ? 'icon-danger' : 'icon-warning'}`} style={{ width: '30px', height: '30px', fontSize: '11px' }}>
+                              <div className={`radar-icon ${isDanger ? 'icon-danger' : 'icon-warning'}`} style={{ width: '30px', height: '30px', fontSize: '11px', flexShrink: 0 }}>
                                 {account.initials}
                               </div>
-                              <span>{account.name}</span>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                <span>{account.name}</span>
+                                {account.email && <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 'normal' }}>{account.email}</span>}
+                              </div>
                             </div>
                           </td>
                           <td style={{ padding: '12px 10px', fontWeight: 600 }}>{account.simulatedScore} / 100</td>
@@ -1014,6 +971,14 @@ Guidelines:
                 />
               </div>
               <div>
+                <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Contact Email</label>
+                <input 
+                  type="email" value={editAccount.email} placeholder="client@company.com"
+                  onChange={e => setEditAccount({...editAccount, email: e.target.value})}
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface-1)', color: '#fff', marginTop: '4px' }}
+                />
+              </div>
+              <div>
                 <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Initials</label>
                 <input 
                   type="text" maxLength={3} value={editAccount.initials} required
@@ -1027,15 +992,6 @@ Guidelines:
                   type="text" value={editAccount.desc} required
                   onChange={e => setEditAccount({...editAccount, desc: e.target.value})}
                   style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface-1)', color: '#fff', marginTop: '4px' }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Health Score (0 - 100): {editAccount.score}</label>
-                <input 
-                  type="range" min="1" max="100" 
-                  value={editAccount.score} 
-                  onChange={e => setEditAccount({...editAccount, score: parseInt(e.target.value)})}
-                  style={{ width: '100%', marginTop: '4px' }}
                 />
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
@@ -1109,52 +1065,6 @@ Guidelines:
                 {copied ? 'Copied to Clipboard!' : 'Copy Draft'}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add Account Modal */}
-      {isAddModalOpen && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(2px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
-        }}>
-          <div style={{
-            backgroundColor: 'var(--surface-2)', padding: '24px', borderRadius: '12px',
-            width: '400px', maxWidth: '90%', border: '1px solid var(--border)'
-          }}>
-            <h3 style={{ marginTop: 0, marginBottom: '16px' }}>Add New Account</h3>
-            <form onSubmit={handleCreateAccount} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <input 
-                type="text" placeholder="Company Name (e.g., TechFlow)" 
-                value={newAccount.name} required
-                onChange={e => setNewAccount({...newAccount, name: e.target.value})}
-                style={{ padding: '8px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface-1)', color: '#fff' }}
-              />
-              <input 
-                type="text" placeholder="Initials (e.g., TF)" maxLength={3}
-                value={newAccount.initials} required
-                onChange={e => setNewAccount({...newAccount, initials: e.target.value})}
-                style={{ padding: '8px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface-1)', color: '#fff' }}
-              />
-              <input 
-                type="text" placeholder="Description / Signals" 
-                value={newAccount.desc} required
-                onChange={e => setNewAccount({...newAccount, desc: e.target.value})}
-                style={{ padding: '8px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface-1)', color: '#fff' }}
-              />
-              <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Health Score (0 - 100): {newAccount.score}</label>
-              <input 
-                type="range" min="1" max="100" 
-                value={newAccount.score} 
-                onChange={e => setNewAccount({...newAccount, score: parseInt(e.target.value)})}
-              />
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
-                <button type="button" className="btn" style={{ width: 'auto', background: 'transparent', border: '1px solid var(--border)' }} onClick={() => setIsAddModalOpen(false)}>Cancel</button>
-                <button type="submit" className="btn" style={{ width: 'auto' }}>Create Account</button>
-              </div>
-            </form>
           </div>
         </div>
       )}

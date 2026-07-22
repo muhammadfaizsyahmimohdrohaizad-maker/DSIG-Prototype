@@ -9,7 +9,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
     http_response_code(200);
     exit();
 }
+$host = "mysql-241871b6-student-92dd.k.aivencloud.com;port=18197"; // ⚠️ REPLACE 12345 WITH YOUR ACTUAL AIVEN PORT
+$db_name = "defaultdb";
+$username = "avnadmin";
+$password = getenv('AIVEN_PASSWORD');;
 
+try {
+    $pdo = new PDO("mysql:host=" . $host . ";dbname=" . $db_name . ";charset=utf8mb4", $username, $password, [PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false]);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+} catch(PDOException $e) {
+    echo json_encode(['error' => $e->getMessage()]);
+    exit();
+}
 $host = "127.0.0.1;port=3307";
 $db_name = "havlook_db";
 $username = "root";
@@ -118,17 +129,18 @@ if ($method === 'GET') {
     exit();
 }
 
-// 2. POST: Insert new account into MySQL
+// 2. POST: Insert new account into MySQL (Updated with email)
 if ($method === 'POST') {
     $data = json_decode(file_get_contents("php://input"), true);
     if (!empty($data['name'])) {
         try {
-            $stmt = $pdo->prepare("INSERT INTO accounts (`name`, `initials`, `desc`, `score`, `history`, `factors`) VALUES (?, ?, ?, ?, ?, ?)");
-            $score = intval($data['score']);
+            $stmt = $pdo->prepare("INSERT INTO accounts (`name`, `email`, `initials`, `desc`, `score`, `history`, `factors`) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $score = isset($data['score']) ? intval($data['score']) : 100; // Default to 100 if missing
+            $email = isset($data['email']) ? $data['email'] : '';
             $history = json_encode([$score, $score, $score, $score, $score, $score]);
             $factors = json_encode([]);
             
-            $stmt->execute([$data['name'], $data['initials'], $data['desc'], $score, $history, $factors]);
+            $stmt->execute([$data['name'], $email, $data['initials'], $data['desc'], $score, $history, $factors]);
             echo json_encode(['status' => 'success']);
         } catch (PDOException $e) {
             echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
@@ -137,13 +149,14 @@ if ($method === 'POST') {
     }
 }
 
-// 3. PUT: Update existing account in MySQL
+// 3. PUT: Update existing account in MySQL (Updated with email, removed score)
 if ($method === 'PUT') {
     $data = json_decode(file_get_contents("php://input"), true);
     if (!empty($data['id'])) {
         try {
-            $stmt = $pdo->prepare("UPDATE accounts SET `name` = ?, `initials` = ?, `desc` = ?, `score` = ? WHERE `id` = ?");
-            $stmt->execute([$data['name'], $data['initials'], $data['desc'], intval($data['score']), intval($data['id'])]);
+            $stmt = $pdo->prepare("UPDATE accounts SET `name` = ?, `email` = ?, `initials` = ?, `desc` = ? WHERE `id` = ?");
+            $email = isset($data['email']) ? $data['email'] : '';
+            $stmt->execute([$data['name'], $email, $data['initials'], $data['desc'], intval($data['id'])]);
             echo json_encode(['status' => 'success']);
         } catch (PDOException $e) {
             echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
